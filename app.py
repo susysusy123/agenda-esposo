@@ -1,129 +1,73 @@
 import streamlit as st
-import pandas as pd
 from groq import Groq
-import json
-import os
-from datetime import datetime
+import pandas as pd
+from gspread_pandas import Spread, conf
 
-# --- 1. CONFIGURACIÓN ---
-LLAVE_GROQ = st.secrets["GROQ_API_KEY"] 
-client = Groq(api_key=LLAVE_GROQ)
-ARCHIVO_DATOS = "mis_tareas.csv"
+# Configuración de la página
+st.set_page_config(page_title="Mi Agenda Inteligente", page_icon="📋")
 
-st.set_page_config(page_title="Agenda Inteligente Pro", layout="wide")
-
-# Estilo personalizado para el título
-st.markdown("<h1 style='text-align: center; color: #007BFF;'>📋 Mi Agenda Inteligente</h1>", unsafe_allow_html=True)
-
-# --- 2. GESTIÓN DE DATOS ---
-def cargar_datos():
-    if os.path.exists(ARCHIVO_DATOS):
-        return pd.read_csv(ARCHIVO_DATOS).to_dict('records')
-    return []
-
-def guardar_datos():
-    df = pd.DataFrame(st.session_state.pendientes)
-    df.to_csv(ARCHIVO_DATOS, index=False)
-
-if 'pendientes' not in st.session_state:
-    st.session_state.pendientes = cargar_datos()
-
-# --- 3. FUNCIÓN IA MEJORADA (MÁXIMA PRECISIÓN) ---
-def analizar_con_ia(texto):
-    fecha_hoy = datetime.now().strftime("%d/%m/%Y")
+# 1. Conexión con los Secrets (Groq y Google)
+try:
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
     
-    instruccion = f"""
-    Eres un asistente de logística para construcción. Hoy es {fecha_hoy}.
-    Tu misión es extraer datos del texto: "{texto}"
-    
-    REGLAS ESTRICTAS:
-    1. PROYECTO: Acción principal (ej. 'Comprar material', 'Revisar obra').
-    2. PRIORIDAD: 'Alta', 'Media' o 'Baja'. (Si dice 'urgente' es Alta).
-    3. ENTREGA: Busca nombres propios o lugares. 
-       - Si dice 'con Luis', 'para Pedro', 'en la Obra', extrae: 'Luis', 'Pedro' u 'Obra'.
-       - NO incluyas el nombre en la columna 'proyecto'.
-    4. FECHA: Calcula la fecha exacta (ej. 'mañana', 'próximo viernes').
+    # Configuración de credenciales de Google
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    # ID de tu hoja de cálculo (extraído de tu link)
+    SHEET_ID = "1qX27CJPxjB-DaOUTmNjyRwZ1fLO6JEAAZsbK6zgZwGk"
+except Exception as e:
+    st.error("Error en la configuración de seguridad. Revisa los Secrets.")
 
-    Responde SOLAMENTE un JSON con estas llaves: proyecto, prioridad, entrega, fecha.
-    """
-    
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": instruccion}],
-        response_format={"type": "json_object"}
-    )
-    return json.loads(completion.choices[0].message.content)
+st.title("📋 Mi Agenda Inteligente")
 
-# --- 4. INTERFAZ DE ENTRADA ---
-with st.container():
-    with st.form("nuevo_pendiente", clear_on_submit=True):
-        st.subheader("🎙️ Dictado de Tarea")
-        entrada = st.text_input("Escribe o dicta:", placeholder="Ej: Mañana llevar planos a la obra con el Arq. Daniel prioridad alta")
-        boton_enviar = st.form_submit_button("Organizar y Guardar en Lista")
-
-if boton_enviar and entrada:
+# Función para guardar en Google Sheets
+def guardar_en_sheets(nueva_tarea, fecha):
     try:
-        with st.spinner("La IA está clasificando..."):
-            datos = analizar_con_ia(entrada)
-            datos["realizado"] = "No"
-            st.session_state.pendientes.append(datos)
-            guardar_datos()
-            st.toast("¡Tarea guardada con éxito! ✅")
-            st.rerun()
+        # Conectar a la hoja usando las credenciales de los Secrets
+        c = conf.get_config(conf_dir=".", file_name="creds.json") 
+        # Nota: gspread_pandas es un poco técnico, usaremos una versión más directa para ti:
+        import gspread
+        from google.oauth2.service_account import Credentials
+        
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+        cliente_g = gspread.authorize(creds)
+        
+        hoja = cliente_g.open_by_key(SHEET_ID).sheet1
+        hoja.append_row([nueva_tarea, fecha, "Pendiente"])
+        return True
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error al guardar: {e}")
+        return False
+
+# Interfaz de usuario
+st.subheader("🎙️ Dictado de Tarea")
+entrada = st.text_input("Escribe o dicta:", placeholder="Ej: Mañana a las 10am cita con el médico")
+
+if st.button("Organizar y Guardar en Lista"):
+    if entrada:
+        with st.spinner("Procesando con IA..."):
+            # La IA organiza la frase
+            prompt = f"Extrae la tarea y la fecha de este texto y devuélvelo en formato 'Tarea | Fecha': {entrada}"
+            chat_completion = client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model="llama3-8b-8192",
+            )
+            respuesta = chat_completion.choices[0].message.content
+            
+            # Intentar separar tarea y fecha
+            try:
+                tarea_limpia = respuesta.split("|")[0].strip()
+                fecha_limpia = respuesta.split("|")[1].strip()
+            except:
+                tarea_limpia = respuesta
+                fecha_limpia = "No especificada"
+
+            # Guardar en Google Sheets
+            if guardar_en_sheets(tarea_limpia, fecha_limpia):
+                st.success(f"✅ ¡Guardado en Google Sheets!: {tarea_limpia}")
+                st.balloons()
+    else:
+        st.warning("Por favor, escribe algo primero.")
 
 st.divider()
-
-# --- 5. TABLA DE TAREAS ---
-if st.session_state.pendientes:
-    st.subheader("Tareas Pendientes")
-    
-    # Encabezados
-    cols = st.columns([0.5, 2.5, 1, 1.5, 1.5, 1, 1.5])
-    titulos = ["N°", "Proyecto", "Prioridad", "Encargado", "Fecha", "Status", "Acciones"]
-    for col, titulo in zip(cols, titulos):
-        col.write(f"**{titulo}**")
-
-    # Filas
-    for i, p in enumerate(st.session_state.pendientes):
-        c1, c2, c3, c4, c5, c6, c7 = st.columns([0.5, 2.5, 1, 1.5, 1.5, 1, 1.5])
-        
-        c1.write(i + 1)
-        
-        # Tachado si está hecho
-        if p['realizado'] == "Sí":
-            c2.markdown(f"~~{p['proyecto']}~~")
-            c6.write("✅")
-        else:
-            c2.write(p['proyecto'])
-            c6.write("⏳")
-        
-        # Colores para prioridad
-        prio = p['prioridad'].capitalize()
-        if prio == "Alta":
-            c3.markdown(f"<span style='color:red'>{prio}</span>", unsafe_allow_html=True)
-        else:
-            c3.write(prio)
-            
-        c4.write(p['entrega'])
-        c5.write(p['fecha'])
-        
-        # Botones
-        b1, b2 = c7.columns(2)
-        if b1.button("✔️", key=f"h_{i}"):
-            st.session_state.pendientes[i]['realizado'] = "Sí"
-            guardar_datos()
-            st.rerun()
-        if b2.button("🗑️", key=f"b_{i}"):
-            st.session_state.pendientes.pop(i)
-            guardar_datos()
-            st.rerun()
-
-    st.write("")
-    if st.button("🔴 Limpiar lista completa"):
-        st.session_state.pendientes = []
-        if os.path.exists(ARCHIVO_DATOS): os.remove(ARCHIVO_DATOS)
-        st.rerun()
-else:
-    st.info("No hay tareas pendientes. ¡Dicta una arriba!")
+st.info("Nota: Las tareas se guardan permanentemente en tu Google Sheet.")
