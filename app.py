@@ -52,3 +52,4 @@ if st.button("Guardar"):
                 st.error(f"Error con la IA: {e}")
     else:
         st.warning("Escribe algo primero.")
+
