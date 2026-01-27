@@ -3,52 +3,52 @@ from groq import Groq
 import gspread
 from google.oauth2.service_account import Credentials
 
-# 1. Configuración de Seguridad
+st.set_page_config(page_title="Agenda Esposo", page_icon="📋")
+
+# Conexión Segura
 try:
-    # Aquí es donde estaba el error del paréntesis
-    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+    # Cambiamos la forma de leer la llave para que sea más directa
+    api_key_groq = st.secrets.get("GROQ_API_KEY")
+    client = Groq(api_key=api_key_groq)
     SHEET_ID = "1qX27CJPxjB-DaOUTmNjyRwZ1fLO6JEAAZsbK6zgZwGk"
 except Exception as e:
-    st.error("Error de configuración: Revisa los Secrets en Streamlit.")
+    st.error(f"Error de configuración inicial: {e}")
 
 st.title("📋 Mi Agenda Inteligente")
 
-# 2. Función para guardar en Google Sheets
-def guardar_en_sheets(nueva_tarea, fecha):
+def guardar_en_sheets(tarea, fecha):
     try:
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
         cliente_g = gspread.authorize(creds)
         hoja = cliente_g.open_by_key(SHEET_ID).sheet1
-        hoja.append_row([nueva_tarea, fecha, "Pendiente"])
+        hoja.append_row([tarea, fecha, "Pendiente"])
         return True
     except Exception as e:
-        st.error(f"Error al conectar con Google Sheets: {e}")
+        st.error(f"Error en Google Sheets: {e}")
         return False
 
-# 3. Interfaz de Usuario
 st.subheader("🎙️ Dictado de Tarea")
-entrada = st.text_input("Escribe o dicta tu tarea:", placeholder="Ej: Comprar flores el miércoles")
+entrada = st.text_input("Escribe o dicta:", placeholder="Ej: Recoger zapatos hoy")
 
-if st.button("Guardar en mi Excel"):
+if st.button("Guardar"):
     if entrada:
-        with st.spinner("La IA está organizando tu nota..."):
-            prompt = f"Extrae la tarea y la fecha de este texto. Formato: Tarea | Fecha. Texto: {entrada}"
-            chat_completion = client.chat.completions.create(
-                messages=[{"role": "user", "content": prompt}],
-                model="llama3-8b-8192",
-            )
-            respuesta = chat_completion.choices[0].message.content
-            
+        with st.spinner("Procesando..."):
             try:
-                partes = respuesta.split("|")
-                tarea_limpia = partes[0].strip()
-                fecha_limpia = partes[1].strip() if len(partes) > 1 else "No indicada"
-            except:
-                tarea_limpia, fecha_limpia = respuesta, "No indicada"
+                # Usamos el modelo más actualizado
+                chat_completion = client.chat.completions.create(
+                    messages=[{"role": "user", "content": f"Extrae Tarea | Fecha de: {entrada}"}],
+                    model="llama-3.3-70b-versatile",
+                )
+                respuesta = chat_completion.choices[0].message.content
+                tarea_limpia = respuesta.split("|")[0].strip()
+                fecha_limpia = respuesta.split("|")[1].strip() if "|" in respuesta else "Hoy"
 
-            if guardar_en_sheets(tarea_limpia, fecha_limpia):
-                st.success(f"✅ ¡Listo! Se guardó: {tarea_limpia}")
-                st.balloons()
+                if guardar_en_sheets(tarea_limpia, fecha_limpia):
+                    st.success(f"✅ Guardado: {tarea_limpia}")
+                    st.balloons()
+            except Exception as e:
+                # Esto nos dirá el error real en pantalla
+                st.error(f"Error con la IA: {e}")
     else:
-        st.warning("Escribe algo antes de guardar.")
+        st.warning("Escribe algo primero.")
