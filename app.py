@@ -29,26 +29,22 @@ def guardar_en_sheets(tarea, fecha):
 
 st.subheader("🎙️ Dictado de Tarea")
 
-# Usamos un formulario para que el ENTER funcione
+# Formulario para que el ENTER funcione
 with st.form("mi_formulario", clear_on_submit=True):
-    # 'label_visibility' oculta el texto sobre el cuadro para que se vea más limpio
-    # 'autocomplete="off"' evita que aparezcan las sugerencias de lo que escribiste antes
     entrada = st.text_input(
-        "Introduce la tarea:", 
-        placeholder="Ej: Recoger zapatos hoy",
+        "Escribe aquí:", 
+        placeholder="Ej: Recoger zapatos mañana",
         label_visibility="collapsed",
-        key="input_tarea",
-        help="Escribe y presiona Enter para guardar"
+        key="input_tarea"
     )
     
-    boton_guardar = st.form_submit_button("Guardar en mi Lista")
+    boton_guardar = st.form_submit_button("Guardar Tarea")
 
-# Lógica después de presionar el botón o darle ENTER
 if boton_guardar:
     if entrada:
         with st.spinner("Organizando..."):
             try:
-                instruccion = f"Extrae Tarea | Fecha. Sé breve. No respondas nada más que el formato. Texto: {entrada}"
+                instruccion = f"Extrae Tarea | Fecha de forma muy breve. Texto: {entrada}"
                 
                 chat_completion = client.chat.completions.create(
                     messages=[{"role": "user", "content": instruccion}],
@@ -66,19 +62,18 @@ if boton_guardar:
                     fecha_limpia = "Hoy"
 
                 if guardar_en_sheets(tarea_limpia, fecha_limpia):
-                    st.success(f"✅ ¡Guardado con éxito!")
+                    st.success(f"✅ ¡Guardado!: {tarea_limpia}")
                     st.balloons()
             except Exception as e:
                 st.error(f"Error con la IA: {e}")
     else:
         st.warning("Escribe algo primero.")
 
-# Agregamos este pequeño truco para que el navegador no sugiera tareas viejas
+# ESTO ES LO QUE CORREGÍ: Ahora ya no dará error
 st.markdown("""
-    <script>
-        var inputs = window.parent.document.querySelectorAll('input');
-        inputs.forEach(input => {
-            input.setAttribute('autocomplete', 'off');
-        });
-    </script>
-""", unsafe_content_allowed=True)
+    <style>
+        input {
+            autocomplete: off;
+        }
+    </style>
+""", unsafe_allow_html=True)
