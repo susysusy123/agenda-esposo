@@ -4,7 +4,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import pandas as pd
 
-st.set_page_config(page_title="Agenda Esposo", page_icon="📋", layout="centered")
+st.set_page_config(page_title="Agenda Esposo", page_icon="📋", layout="wide")
 
 # --- CONEXIÓN ---
 try:
@@ -24,64 +24,77 @@ st.title("📋 Mi Agenda Inteligente")
 # --- FUNCIONES ---
 def guardar_en_sheets(tarea, fecha, destino):
     try:
-        # Ahora guardamos 4 columnas: Tarea, Fecha, Entregar a, Estado
         hoja.append_row([tarea, fecha, destino, "Pendiente"])
         return True
-    except:
-        return False
+    except: return False
+
+def marcar_completada(fila_index):
+    try:
+        # Sumamos 2 porque las filas de Google Sheets empiezan en 1 y la fila 1 son encabezados
+        hoja.update_cell(fila_index + 2, 4, "Completado")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Error al borrar: {e}")
 
 # --- INTERFAZ DE DICTADO ---
-st.subheader("🎙️ Nueva Tarea")
-with st.form("mi_formulario", clear_on_submit=True):
-    entrada = st.text_input("Escribe o dicta:", placeholder="Ej: Recoger zapatos mañana para Luis", label_visibility="collapsed")
-    boton_guardar = st.form_submit_button("Guardar en mi Lista")
+with st.expander("🎙️ Dictar Nueva Tarea", expanded=True):
+    with st.form("mi_formulario", clear_on_submit=True):
+        entrada = st.text_input("Escribe o dicta:", placeholder="Ej: Ir a consulta con Sandy y entregar reporte a Ezequiel el jueves")
+        boton_guardar = st.form_submit_button("Guardar Tarea")
 
 if boton_guardar and entrada:
-    with st.spinner("Procesando datos..."):
+    with st.spinner("La IA está separando los nombres..."):
         try:
-            # Instrucción reforzada para evitar párrafos largos
-            prompt = f"""Extrae los datos del texto y responde ÚNICAMENTE en este formato: 
-            Tarea | Fecha | Persona
-            Si no hay fecha pon 'No indicada'. Si no hay persona pon 'No indicada'.
+            prompt = f"""Analiza el texto y separa:
+            1. Tarea: La acción principal (ej: 'Ir a consulta con Sandy').
+            2. Fecha: Solo el día o fecha mencionada. Si no hay, pon 'Pendiente'.
+            3. Entregar a: El nombre de la persona que recibe el resultado final (ej: 'Ezequiel').
+            Responde SOLO con este formato: Tarea | Fecha | Entregar a
             Texto: {entrada}"""
             
             chat_completion = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
                 model="llama-3.3-70b-versatile",
             )
-            
             res = chat_completion.choices[0].message.content.strip()
             
-            # Separamos con cuidado
-            if "|" in res:
-                p = res.split("|")
-                t_limpia = p[0].strip()
-                f_limpia = p[1].strip() if len(p) > 1 else "No indicada"
-                d_limpia = p[2].strip() if len(p) > 2 else "No indicada"
-            else:
-                t_limpia, f_limpia, d_limpia = res, "No indicada", "No indicada"
+            p = res.split("|")
+            t_limpia = p[0].strip()
+            f_limpia = p[1].strip() if len(p) > 1 else "Pendiente"
+            d_limpia = p[2].strip() if len(p) > 2 else "No indicado"
 
             if guardar_en_sheets(t_limpia, f_limpia, d_limpia):
-                st.success(f"✅ ¡Anotado!")
+                st.success(f"✅ Anotado: {t_limpia}")
                 st.balloons()
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error IA: {e}")
 
 st.divider()
 
-# --- VER TAREAS (BOTÓN MÁGICO) ---
-if st.button("📂 Ver mis Tareas Pendientes"):
-    try:
-        data = hoja.get_all_records()
-        if data:
-            df = pd.DataFrame(data)
-            # Solo mostramos las que están pendientes
-            pendientes = df[df['Estado'] == 'Pendiente']
-            st.table(pendientes)
+# --- TABLA DE TAREAS PENDIENTES ---
+st.subheader("📂 Tareas por Hacer")
+try:
+    data = hoja.get_all_records()
+    if data:
+        df = pd.DataFrame(data)
+        # Filtramos solo las pendientes
+        pendientes = df[df['Estado'] == 'Pendiente']
+        
+        if not pendientes.empty:
+            # Creamos columnas para poner el botón al lado de cada tarea
+            for i, row in pendientes.iterrows():
+                col1, col2 = st.columns([0.8, 0.2])
+                with col1:
+                    st.write(f"**{row['Tarea']}** (Para: {row['Entregar a']} - Fecha: {row['Fecha']})")
+                with col2:
+                    if st.button("✅ Hecho", key=f"btn_{i}"):
+                        marcar_completada(i)
         else:
-            st.info("Aún no hay tareas en la lista.")
-    except Exception as e:
-        st.error("Primero guarda una tarea para activar la tabla.")
+            st.info("¡Felicidades! No hay tareas pendientes.")
+    else:
+        st.info("La lista está vacía.")
+except Exception as e:
+    st.write("Cargando lista...")
 
-# Estilo para evitar el historial
-st.markdown("<style>input{autocomplete: off;}</style>", unsafe_allow_html=True)
+# Evitar autocompletado
+st.markdown("<style>input{autocomplete: off;} .stButton>button{width:100%}</style>", unsafe_allow_html=True)
