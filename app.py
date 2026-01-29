@@ -22,34 +22,33 @@ except Exception as e:
 st.title("📋 Mi Agenda Inteligente")
 
 # --- FUNCIONES ---
-def guardar_en_sheets(tarea, fecha, destino):
+def guardar_en_sheets(tarea, fecha, destino, prioridad):
     try:
-        hoja.append_row([tarea, fecha, destino, "Pendiente"])
+        # Guardamos: Tarea, Fecha, Entregar a, Prioridad, Estado
+        hoja.append_row([tarea, fecha, destino, prioridad, "Pendiente"])
         return True
     except: return False
 
 def marcar_completada(fila_index):
     try:
-        # Sumamos 2 porque las filas de Google Sheets empiezan en 1 y la fila 1 son encabezados
-        hoja.update_cell(fila_index + 2, 4, "Completado")
+        # El Estado está en la columna 5 (E)
+        hoja.update_cell(fila_index + 2, 5, "Completado")
         st.rerun()
     except Exception as e:
-        st.error(f"Error al borrar: {e}")
+        st.error(f"Error al marcar como hecho: {e}")
 
 # --- INTERFAZ DE DICTADO ---
 with st.expander("🎙️ Dictar Nueva Tarea", expanded=True):
     with st.form("mi_formulario", clear_on_submit=True):
-        entrada = st.text_input("Escribe o dicta:", placeholder="Ej: Ir a consulta con Sandy y entregar reporte a Ezequiel el jueves")
+        entrada = st.text_input("Escribe o dicta:", placeholder="Ej: Recoger zapatos de mamacita hoy con prioridad alta")
         boton_guardar = st.form_submit_button("Guardar Tarea")
 
 if boton_guardar and entrada:
-    with st.spinner("La IA está separando los nombres..."):
+    with st.spinner("Analizando detalles..."):
         try:
-            prompt = f"""Analiza el texto y separa:
-            1. Tarea: La acción principal (ej: 'Ir a consulta con Sandy').
-            2. Fecha: Solo el día o fecha mencionada. Si no hay, pon 'Pendiente'.
-            3. Entregar a: El nombre de la persona que recibe el resultado final (ej: 'Ezequiel').
-            Responde SOLO con este formato: Tarea | Fecha | Entregar a
+            prompt = f"""Analiza el texto y separa los datos.
+            Responde ÚNICAMENTE en este formato: Tarea | Fecha | Entregar a | Prioridad
+            - Prioridad: Puede ser Alta, Media o Normal. Si no se menciona, pon 'Normal'.
             Texto: {entrada}"""
             
             chat_completion = client.chat.completions.create(
@@ -62,10 +61,11 @@ if boton_guardar and entrada:
             t_limpia = p[0].strip()
             f_limpia = p[1].strip() if len(p) > 1 else "Pendiente"
             d_limpia = p[2].strip() if len(p) > 2 else "No indicado"
+            pr_limpia = p[3].strip() if len(p) > 3 else "Normal"
 
-            if guardar_en_sheets(t_limpia, f_limpia, d_limpia):
+            if guardar_en_sheets(t_limpia, f_limpia, d_limpia, pr_limpia):
                 st.success(f"✅ Anotado: {t_limpia}")
-                st.balloons()
+                # ELIMINAMOS LA LÍNEA DE LOS GLOBOS AQUÍ
         except Exception as e:
             st.error(f"Error IA: {e}")
 
@@ -77,24 +77,26 @@ try:
     data = hoja.get_all_records()
     if data:
         df = pd.DataFrame(data)
-        # Filtramos solo las pendientes
         pendientes = df[df['Estado'] == 'Pendiente']
         
         if not pendientes.empty:
-            # Creamos columnas para poner el botón al lado de cada tarea
             for i, row in pendientes.iterrows():
-                col1, col2 = st.columns([0.8, 0.2])
-                with col1:
-                    st.write(f"**{row['Tarea']}** (Para: {row['Entregar a']} - Fecha: {row['Fecha']})")
-                with col2:
-                    if st.button("✅ Hecho", key=f"btn_{i}"):
-                        marcar_completada(i)
+                # Estilo de tarjeta para cada tarea
+                with st.container():
+                    col1, col2 = st.columns([0.8, 0.2])
+                    with col1:
+                        emoji = "🔴" if "Alta" in str(row['Prioridad']) else "🟡" if "Media" in str(row['Prioridad']) else "🟢"
+                        st.write(f"{emoji} **{row['Tarea']}**")
+                        st.caption(f"📅 {row['Fecha']} | 👤 Para: {row['Entregar a']} | ⚠️ {row['Prioridad']}")
+                    with col2:
+                        if st.button("✅", key=f"btn_{i}"):
+                            marcar_completada(i)
+                st.write("---")
         else:
-            st.info("¡Felicidades! No hay tareas pendientes.")
+            st.info("¡Todo listo! No hay pendientes.")
     else:
         st.info("La lista está vacía.")
 except Exception as e:
-    st.write("Cargando lista...")
+    st.write("Cargando lista actualizada...")
 
-# Evitar autocompletado
-st.markdown("<style>input{autocomplete: off;} .stButton>button{width:100%}</style>", unsafe_allow_html=True)
+st.markdown("<style>input{autocomplete: off;} .stButton>button{border-radius: 20px;}</style>", unsafe_allow_html=True)
