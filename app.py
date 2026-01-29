@@ -2,78 +2,86 @@ import streamlit as st
 from groq import Groq
 import gspread
 from google.oauth2.service_account import Credentials
+import pandas as pd
 
-st.set_page_config(page_title="Agenda Esposo", page_icon="📋")
+st.set_page_config(page_title="Agenda Esposo", page_icon="📋", layout="centered")
 
-# Conexión Segura
+# --- CONEXIÓN ---
 try:
     api_key_groq = st.secrets.get("GROQ_API_KEY")
     client = Groq(api_key=api_key_groq)
     SHEET_ID = "1qX27CJPxjB-DaOUTmNjyRwZ1fLO6JEAAZsbK6zgZwGk"
+    
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+    cliente_g = gspread.authorize(creds)
+    hoja = cliente_g.open_by_key(SHEET_ID).sheet1
 except Exception as e:
-    st.error(f"Error de configuración: {e}")
+    st.error(f"Error de conexión: {e}")
 
 st.title("📋 Mi Agenda Inteligente")
 
-def guardar_en_sheets(tarea, fecha):
+# --- FUNCIONES ---
+def guardar_en_sheets(tarea, fecha, destino):
     try:
-        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-        cliente_g = gspread.authorize(creds)
-        hoja = cliente_g.open_by_key(SHEET_ID).sheet1
-        hoja.append_row([tarea, fecha, "Pendiente"])
+        # Ahora guardamos 4 columnas: Tarea, Fecha, Entregar a, Estado
+        hoja.append_row([tarea, fecha, destino, "Pendiente"])
         return True
-    except Exception as e:
-        st.error(f"Error en Google Sheets: {e}")
+    except:
         return False
 
-st.subheader("🎙️ Dictado de Tarea")
-
-# Formulario para que el ENTER funcione
+# --- INTERFAZ DE DICTADO ---
+st.subheader("🎙️ Nueva Tarea")
 with st.form("mi_formulario", clear_on_submit=True):
-    entrada = st.text_input(
-        "Escribe aquí:", 
-        placeholder="Ej: Recoger zapatos mañana",
-        label_visibility="collapsed",
-        key="input_tarea"
-    )
-    
-    boton_guardar = st.form_submit_button("Guardar Tarea")
+    entrada = st.text_input("Escribe o dicta:", placeholder="Ej: Recoger zapatos mañana para Luis", label_visibility="collapsed")
+    boton_guardar = st.form_submit_button("Guardar en mi Lista")
 
-if boton_guardar:
-    if entrada:
-        with st.spinner("Organizando..."):
-            try:
-                instruccion = f"Extrae Tarea | Fecha de forma muy breve. Texto: {entrada}"
-                
-                chat_completion = client.chat.completions.create(
-                    messages=[{"role": "user", "content": instruccion}],
-                    model="llama-3.3-70b-versatile",
-                )
-                
-                respuesta = chat_completion.choices[0].message.content.strip()
-                
-                if "|" in respuesta:
-                    partes = respuesta.split("|")
-                    tarea_limpia = partes[0].strip()
-                    fecha_limpia = partes[1].strip()
-                else:
-                    tarea_limpia = respuesta
-                    fecha_limpia = "Hoy"
+if boton_guardar and entrada:
+    with st.spinner("Procesando datos..."):
+        try:
+            # Instrucción reforzada para evitar párrafos largos
+            prompt = f"""Extrae los datos del texto y responde ÚNICAMENTE en este formato: 
+            Tarea | Fecha | Persona
+            Si no hay fecha pon 'No indicada'. Si no hay persona pon 'No indicada'.
+            Texto: {entrada}"""
+            
+            chat_completion = client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model="llama-3.3-70b-versatile",
+            )
+            
+            res = chat_completion.choices[0].message.content.strip()
+            
+            # Separamos con cuidado
+            if "|" in res:
+                p = res.split("|")
+                t_limpia = p[0].strip()
+                f_limpia = p[1].strip() if len(p) > 1 else "No indicada"
+                d_limpia = p[2].strip() if len(p) > 2 else "No indicada"
+            else:
+                t_limpia, f_limpia, d_limpia = res, "No indicada", "No indicada"
 
-                if guardar_en_sheets(tarea_limpia, fecha_limpia):
-                    st.success(f"✅ ¡Guardado!: {tarea_limpia}")
-                    st.balloons()
-            except Exception as e:
-                st.error(f"Error con la IA: {e}")
-    else:
-        st.warning("Escribe algo primero.")
+            if guardar_en_sheets(t_limpia, f_limpia, d_limpia):
+                st.success(f"✅ ¡Anotado!")
+                st.balloons()
+        except Exception as e:
+            st.error(f"Error: {e}")
 
-# ESTO ES LO QUE CORREGÍ: Ahora ya no dará error
-st.markdown("""
-    <style>
-        input {
-            autocomplete: off;
-        }
-    </style>
-""", unsafe_allow_html=True)
+st.divider()
+
+# --- VER TAREAS (BOTÓN MÁGICO) ---
+if st.button("📂 Ver mis Tareas Pendientes"):
+    try:
+        data = hoja.get_all_records()
+        if data:
+            df = pd.DataFrame(data)
+            # Solo mostramos las que están pendientes
+            pendientes = df[df['Estado'] == 'Pendiente']
+            st.table(pendientes)
+        else:
+            st.info("Aún no hay tareas en la lista.")
+    except Exception as e:
+        st.error("Primero guarda una tarea para activar la tabla.")
+
+# Estilo para evitar el historial
+st.markdown("<style>input{autocomplete: off;}</style>", unsafe_allow_html=True)
