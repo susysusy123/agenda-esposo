@@ -26,10 +26,9 @@ except Exception as e:
 
 st.title("📋 Mi Agenda Inteligente")
 
-# --- FUNCIONES MEJORADAS ---
+# --- FUNCIONES ---
 def guardar_en_sheets(tarea, fecha, destino, prioridad):
     try:
-        # Forzamos que siempre guarde 5 columnas exactas
         hoja.append_row([tarea, fecha, destino, prioridad, "Pendiente"])
         return True
     except Exception as e:
@@ -38,11 +37,9 @@ def guardar_en_sheets(tarea, fecha, destino, prioridad):
 
 def marcar_completada(fila_real):
     try:
-        # Usamos el número de fila real del Excel
-        # Columna 5 es la 'E' (Estado)
         hoja.update_cell(fila_real, 5, "Completado")
         st.toast("¡Tarea completada!", icon="✅")
-        time.sleep(1) # Pausa para que Google procese
+        time.sleep(1)
         st.rerun()
     except Exception as e:
         st.error(f"No pude actualizar el Excel: {e}")
@@ -50,49 +47,55 @@ def marcar_completada(fila_real):
 # --- INTERFAZ ---
 with st.expander("🎙️ Dictar Nueva Tarea", expanded=True):
     with st.form("mi_formulario", clear_on_submit=True):
-        entrada = st.text_input("Escribe o dicta:", placeholder="Ej: Llevar documentos a Poncho el viernes")
+        entrada = st.text_input("Escribe o dicta:", placeholder="Ej: Revisar reporte con Luis y enviar a Ana mañana")
         boton_guardar = st.form_submit_button("Guardar Tarea")
 
 if boton_guardar and entrada:
-    with st.spinner("Analizando..."):
+    with st.spinner("La IA está pensando..."):
         try:
-            prompt = f"""Separa en: Tarea | Fecha | Entregar a | Prioridad. 
-            Regla: Si hay dos nombres, el que recibe es 'Entregar a'. 
-            No uses etiquetas. Texto: {entrada}"""
-            
-            chat_completion = client.chat.completions.create(
-                messages=[{"role": "user", "content": prompt}],
-                model="llama-3.3-70b-versatile",
-            )
-            res = chat_completion.choices[0].message.content.strip()
-            res = res.replace("Tarea:", "").replace("Fecha:", "").replace("Entregar a:", "").replace("Prioridad:", "")
-            
-            p = res.split("|")
-            t_limpia = p[0].strip()
-            f_limpia = p[1].strip() if len(p) > 1 else "No especificada"
-            d_limpia = p[2].strip() if len(p) > 2 else "No especificada"
-            pr_limpia = p[3].strip() if len(p) > 3 else "Normal"
+            # Añadimos un pequeño re-intento automático por si la IA está ocupada
+            intentos = 0
+            res = ""
+            while intentos < 2:
+                try:
+                    chat_completion = client.chat.completions.create(
+                        messages=[{"role": "user", "content": f"Separa en: Tarea | Fecha | Entregar a | Prioridad. Texto: {entrada}"}],
+                        model="llama-3.3-70b-versatile",
+                        timeout=30.0 # Le damos 30 segundos de paciencia
+                    )
+                    res = chat_completion.choices[0].message.content.strip()
+                    break # Si responde, salimos del ciclo
+                except:
+                    intentos += 1
+                    time.sleep(1)
 
-            if guardar_en_sheets(t_limpia, f_limpia, d_limpia, pr_limpia):
-                st.success("✅ Guardado correctamente")
-                time.sleep(1)
-                st.rerun()
-        except: st.error("La IA no respondió a tiempo")
+            if res:
+                # Limpiar etiquetas raras que a veces pone la IA
+                res = res.replace("Tarea:", "").replace("Fecha:", "").replace("Entregar a:", "").replace("Prioridad:", "")
+                p = res.split("|")
+                t_limpia = p[0].strip() if len(p) > 0 else entrada
+                f_limpia = p[1].strip() if len(p) > 1 else "No especificada"
+                d_limpia = p[2].strip() if len(p) > 2 else "No especificada"
+                pr_limpia = p[3].strip() if len(p) > 3 else "Normal"
+
+                if guardar_en_sheets(t_limpia, f_limpia, d_limpia, pr_limpia):
+                    st.success("✅ ¡Tarea anotada con éxito!")
+                    time.sleep(1)
+                    st.rerun()
+            else:
+                st.warning("⚠️ La IA está muy ocupada. Intenta de nuevo en 5 segundos.")
+        except Exception as e:
+            st.error(f"Hubo un detalle técnico: {e}")
 
 st.divider()
 
-# --- LISTA CON FILTRO ROBUSTO ---
+# --- LISTA DE TAREAS ---
 st.subheader("📂 Tareas Pendientes")
 try:
-    # Obtenemos todos los valores incluyendo el número de fila
     lista_completa = hoja.get_all_values()
-    if len(lista_completa) > 1: # Si hay más que solo el encabezado
-        encabezados = lista_completa[0]
-        # Creamos el DataFrame y le sumamos el número de fila real (index + 1)
-        df = pd.DataFrame(lista_completa[1:], columns=encabezados)
+    if len(lista_completa) > 1:
+        df = pd.DataFrame(lista_completa[1:], columns=lista_completa[0])
         df['fila_excel'] = range(2, len(df) + 2)
-        
-        # Filtramos solo las que dicen "Pendiente"
         pendientes = df[df['Estado'] == 'Pendiente']
         
         if not pendientes.empty:
@@ -105,15 +108,12 @@ try:
                         st.write(f"{emoji} **{row['Tarea']}**")
                         st.caption(f"📅 {row['Fecha']} | 👤 Para: {row['Entregar a']} | ⚠️ {row['Prioridad']}")
                     with col2:
-                        # Usamos la fila_excel real para no fallar
                         if st.button("✅", key=f"f_{row['fila_excel']}"):
                             marcar_completada(row['fila_excel'])
                     st.write("---")
         else:
-            st.info("No hay tareas pendientes.")
-    else:
-        st.info("La lista está vacía.")
-except Exception as e:
-    st.write("Conectando con Excel...")
+            st.info("¡Todo limpio! No hay pendientes.")
+except:
+    st.write("Cargando lista...")
 
 st.markdown("<style>input{autocomplete: off;} .stButton>button{border-radius: 20px;}</style>", unsafe_allow_html=True)
