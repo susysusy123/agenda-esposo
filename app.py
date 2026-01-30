@@ -27,19 +27,11 @@ except Exception as e:
 
 st.title("📋 Mi Agenda Inteligente")
 
-# --- PROCESAMIENTO DE IA (VERSIÓN DETALLADA) ---
+# --- PROCESAMIENTO DE IA ---
 def procesar_con_ia(texto_usuario):
-    # Instrucción ajustada para NO resumir
-    prompt = f"""Analiza el texto: "{texto_usuario}"
-    Responde ÚNICAMENTE un objeto JSON así:
-    {{"t": "descripcion detallada", "f": "fecha", "d": "quien recibe", "p": "Prioridad"}}
-    
-    REGLAS DE ORO:
-    1. En 't' (tarea) pon la acción COMPLETA. NO resumas, mantén todos los detalles del usuario.
-    2. Si menciona 'con alguien', inclúyelo en 't'.
-    3. En 'd' (destino) pon SOLO el nombre de quien recibe.
-    4. Responde SOLO el JSON, sin texto extra."""
-    
+    prompt = f"""Analiza: "{texto_usuario}"
+    Responde SOLO JSON: {{"t": "descripcion completa", "f": "fecha", "d": "quien recibe", "p": "Prioridad"}}
+    Regla: NO resumas la tarea."""
     try:
         chat_completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
@@ -48,37 +40,36 @@ def procesar_con_ia(texto_usuario):
         )
         respuesta = chat_completion.choices[0].message.content.strip()
         match = re.search(r'\{.*\}', respuesta, re.DOTALL)
-        if match:
-            return json.loads(match.group())
-        return None
+        return json.loads(match.group()) if match else None
     except:
         return None
 
 # --- INTERFAZ ---
 with st.expander("🎙️ Dictar Nueva Tarea", expanded=True):
     with st.form("mi_formulario", clear_on_submit=True):
-        entrada = st.text_input("Escribe o dicta:", placeholder="Describe la tarea con todos los detalles...")
+        entrada = st.text_input("Escribe o dicta:", placeholder="Describe la tarea...")
         boton_guardar = st.form_submit_button("Guardar Tarea")
 
 if boton_guardar and entrada:
-    with st.spinner("Guardando con detalles..."):
+    with st.spinner("Procesando..."):
         datos = procesar_con_ia(entrada)
         if datos:
             try:
-                hoja.append_row([
-                    datos.get("t", entrada),        # Aquí ahora irá el texto completo
+                # Quitamos el mensaje de éxito estorboso y guardamos directo
+                nueva_fila = [
+                    datos.get("t", entrada), 
                     datos.get("f", "No especificada"),
                     datos.get("d", "No indicado"),
                     datos.get("p", "Normal"),
                     "Pendiente"
-                ])
-                st.success("✅ ¡Guardado con todos los detalles!")
-                time.sleep(1)
-                st.rerun()
-            except:
-                st.error("Error al escribir en Excel")
+                ]
+                hoja.append_row(nueva_fila)
+                time.sleep(1) # Pausa para asegurar que Google escribió
+                st.rerun() # Refresca la app automáticamente para ver la tarea
+            except Exception as e:
+                st.error("Error de conexión con Excel. Intenta de nuevo.")
         else:
-            st.error("No se pudo procesar, intenta de nuevo.")
+            st.error("No se pudo procesar el dictado.")
 
 st.divider()
 
@@ -87,8 +78,11 @@ st.subheader("📂 Tareas Pendientes")
 try:
     lista_completa = hoja.get_all_values()
     if len(lista_completa) > 1:
-        df = pd.DataFrame(lista_completa[1:], columns=lista_completa[0])
+        # Forzamos que lea los encabezados de la fila 1
+        df = pd.DataFrame(lista_completa[1:], columns=["Tarea", "Fecha", "Entregar a", "Prioridad", "Estado"])
         df['fila_excel'] = range(2, len(df) + 2)
+        
+        # Filtrar solo pendientes
         pendientes = df[df['Estado'].str.contains("Pendiente", case=False, na=False)]
         
         for _, row in pendientes.iterrows():
@@ -96,7 +90,7 @@ try:
                 c1, c2 = st.columns([0.85, 0.15])
                 with c1:
                     prio = str(row['Prioridad'])
-                    emoji = "🔴" if "Alta" in prio else "🟡" if "Media" in prio else "🟢"
+                    emoji = "🔴" if "Alta" in prio or "alta" in prio else "🟡" if "Media" in prio or "media" in prio else "🟢"
                     st.write(f"{emoji} **{row['Tarea']}**")
                     st.caption(f"📅 {row['Fecha']} | 👤 Para: {row['Entregar a']} | ⚠️ {row['Prioridad']}")
                 with c2:
@@ -106,7 +100,7 @@ try:
                 st.write("---")
     else:
         st.info("No hay tareas pendientes.")
-except:
-    st.write("Cargando...")
+except Exception as e:
+    st.write("Sincronizando con Excel...")
 
 st.markdown("<style>input{autocomplete: off;} .stButton>button{border-radius: 20px;}</style>", unsafe_allow_html=True)
