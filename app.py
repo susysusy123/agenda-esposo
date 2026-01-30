@@ -27,27 +27,26 @@ except Exception as e:
 
 st.title("📋 Mi Agenda Inteligente")
 
-# --- PROCESAMIENTO DE IA ULTRA SEGURO ---
+# --- PROCESAMIENTO DE IA (VERSIÓN DETALLADA) ---
 def procesar_con_ia(texto_usuario):
-    # Instrucciones súper estrictas para que no escriba párrafos
-    prompt = f"""Extrae datos del texto: "{texto_usuario}"
-    Responde ÚNICAMENTE un objeto JSON sin texto adicional, así:
-    {{"t": "solo la accion", "f": "dia", "d": "quien recibe", "p": "Alta/Media/Normal"}}
+    # Instrucción ajustada para NO resumir
+    prompt = f"""Analiza el texto: "{texto_usuario}"
+    Responde ÚNICAMENTE un objeto JSON así:
+    {{"t": "descripcion detallada", "f": "fecha", "d": "quien recibe", "p": "Prioridad"}}
     
-    Reglas:
-    1. En 't' (tarea) pon la acción. Si alguien ayuda (ej. con Juan), inclúyelo ahí.
-    2. En 'd' (destino) pon SOLO el nombre de quien recibe el resultado.
-    3. NO escribas frases como 'Aquí tienes la información'."""
+    REGLAS DE ORO:
+    1. En 't' (tarea) pon la acción COMPLETA. NO resumas, mantén todos los detalles del usuario.
+    2. Si menciona 'con alguien', inclúyelo en 't'.
+    3. En 'd' (destino) pon SOLO el nombre de quien recibe.
+    4. Responde SOLO el JSON, sin texto extra."""
     
     try:
         chat_completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model="llama-3.3-70b-versatile",
-            temperature=0.1 # Esto la hace menos "platicadora"
+            temperature=0.1 
         )
         respuesta = chat_completion.choices[0].message.content.strip()
-        
-        # Limpiador de emergencia: busca solo lo que esté entre llaves { }
         match = re.search(r'\{.*\}', respuesta, re.DOTALL)
         if match:
             return json.loads(match.group())
@@ -58,61 +57,56 @@ def procesar_con_ia(texto_usuario):
 # --- INTERFAZ ---
 with st.expander("🎙️ Dictar Nueva Tarea", expanded=True):
     with st.form("mi_formulario", clear_on_submit=True):
-        entrada = st.text_input("Escribe o dicta:", placeholder="Ej: Revisar parámetros con Ale y entregar a Daniel el domingo")
+        entrada = st.text_input("Escribe o dicta:", placeholder="Describe la tarea con todos los detalles...")
         boton_guardar = st.form_submit_button("Guardar Tarea")
 
 if boton_guardar and entrada:
-    with st.spinner("Limpiando datos..."):
+    with st.spinner("Guardando con detalles..."):
         datos = procesar_con_ia(entrada)
         if datos:
             try:
-                # Mapeamos los datos del JSON a las columnas del Excel
                 hoja.append_row([
-                    datos.get("t", entrada),        # Tarea
-                    datos.get("f", "Pendiente"),     # Fecha
-                    datos.get("d", "No indicado"),   # Entregar a
-                    datos.get("p", "Normal"),        # Prioridad
-                    "Pendiente"                      # Estado
+                    datos.get("t", entrada),        # Aquí ahora irá el texto completo
+                    datos.get("f", "No especificada"),
+                    datos.get("d", "No indicado"),
+                    datos.get("p", "Normal"),
+                    "Pendiente"
                 ])
-                st.success("✅ Guardado en columnas separadas")
+                st.success("✅ ¡Guardado con todos los detalles!")
                 time.sleep(1)
                 st.rerun()
-            except Exception as e:
-                st.error(f"Error al escribir en Excel: {e}")
+            except:
+                st.error("Error al escribir en Excel")
         else:
-            st.error("La IA no pudo separar los datos, intenta ser más clara.")
+            st.error("No se pudo procesar, intenta de nuevo.")
 
 st.divider()
 
 # --- LISTA DE TAREAS ---
-st.subheader("📂 Tareas por Hacer")
+st.subheader("📂 Tareas Pendientes")
 try:
     lista_completa = hoja.get_all_values()
     if len(lista_completa) > 1:
-        # Usamos los encabezados de la fila 1
         df = pd.DataFrame(lista_completa[1:], columns=lista_completa[0])
         df['fila_excel'] = range(2, len(df) + 2)
-        
-        # Filtramos solo las pendientes
         pendientes = df[df['Estado'].str.contains("Pendiente", case=False, na=False)]
         
-        if not pendientes.empty:
-            for _, row in pendientes.iterrows():
-                with st.container():
-                    c1, c2 = st.columns([0.85, 0.15])
-                    with c1:
-                        prio = str(row['Prioridad'])
-                        emoji = "🔴" if "Alta" in prio else "🟡" if "Media" in prio else "🟢"
-                        st.write(f"{emoji} **{row['Tarea']}**")
-                        st.caption(f"📅 {row['Fecha']} | 👤 Para: {row['Entregar a']} | ⚠️ {row['Prioridad']}")
-                    with c2:
-                        if st.button("✅", key=f"f_{row['fila_excel']}"):
-                            hoja.update_cell(int(row['fila_excel']), 5, "Completado")
-                            st.rerun()
+        for _, row in pendientes.iterrows():
+            with st.container():
+                c1, c2 = st.columns([0.85, 0.15])
+                with c1:
+                    prio = str(row['Prioridad'])
+                    emoji = "🔴" if "Alta" in prio else "🟡" if "Media" in prio else "🟢"
+                    st.write(f"{emoji} **{row['Tarea']}**")
+                    st.caption(f"📅 {row['Fecha']} | 👤 Para: {row['Entregar a']} | ⚠️ {row['Prioridad']}")
+                with c2:
+                    if st.button("✅", key=f"f_{row['fila_excel']}"):
+                        hoja.update_cell(int(row['fila_excel']), 5, "Completado")
+                        st.rerun()
                 st.write("---")
-        else:
-            st.info("¡Todo listo! No hay pendientes.")
-except Exception as e:
-    st.write("Conectando con la base de datos...")
+    else:
+        st.info("No hay tareas pendientes.")
+except:
+    st.write("Cargando...")
 
 st.markdown("<style>input{autocomplete: off;} .stButton>button{border-radius: 20px;}</style>", unsafe_allow_html=True)
